@@ -45,6 +45,7 @@ class MyGUI:
             Скрывает другие окна и отображает окно выбора дизайна.
             """
             self.save_window.withdraw()
+            self.third_window.withdraw()
             self.user_choice = choice  # Сохраняем выбор пользователя (QR-код или штрихкод)
             self.root.withdraw()  # Скрываем главное окно
             self.second_window.deiconify()  # Показываем окно выбора дизайна
@@ -57,6 +58,7 @@ class MyGUI:
             """
             self.second_window.withdraw()
             self.save_window.withdraw()
+            self.image_window.withdraw()
             self.third_window.deiconify()
 
             # Обработка пользовательского цвета
@@ -131,13 +133,30 @@ class MyGUI:
             update_size_options()  # Обновляем варианты размеров
             self.save_window.deiconify()  # Показываем окно выбора размера
 
+        def is_valid_color(color_str):
+            try:
+                # Пытаемся создать 1x1 изображение с этим цветом
+                Image.new("RGB", (1, 1), color_str)
+                return True
+            except ValueError:
+                return False
+
         def generate_and_show_image(width, height):
             """
             Генерирует изображение (QR-код или штрихкод) с заданными параметрами
             и отображает его в интерфейсе.
             """
             user_text = self.textbox.get("1.0", tk.END).strip()  # Получаем текст для кодирования
+
+            # Если текст пустой, подставим пробел (пустой штрихкод)
+            if not user_text:
+                user_text = " "
+
             design = self.selected_design  # Получаем выбранный дизайн
+
+            # Если дизайн пустой или None, ставим 'black' по умолчанию
+            if not design or design == "None":
+                design = "black"
 
             if self.user_choice == 'QR-код':
                 # Обработка цвета для QR-кода
@@ -145,7 +164,15 @@ class MyGUI:
                 if design == "classic":
                     qr_color = "black"
                 elif design == "your colour":
-                    qr_color = self.textbox1.get("1.0", tk.END).strip()
+                    custom_color = self.textbox1.get("1.0", tk.END).strip()
+                    if custom_color:
+                        if not is_valid_color(custom_color):
+                            tk.messagebox.showerror("Ошибка цвета",
+                                                    f"Цвет '{custom_color}' не распознан. Убедитесь, что это корректное название (например, 'red') или HEX (например, '#ff0000').")
+                            return
+                        qr_color = custom_color
+                    else:
+                        qr_color = "black" # По умолчанию черный
 
                 # Генерация QR-кода
                 qrcode = segno.make_qr(user_text)
@@ -168,14 +195,52 @@ class MyGUI:
                 if design == "classic":
                     sh_color = "black"
                 elif design == "your colour":
-                    sh_color = self.textbox1.get("1.0", tk.END).strip()
+                    custom_color = self.textbox1.get("1.0", tk.END).strip()
+                    if custom_color:
+                        if not is_valid_color(custom_color):
+                            tk.messagebox.showerror("Ошибка цвета",
+                                                    f"Цвет '{custom_color}' не распознан. Убедитесь, что это корректное название (например, 'red') или HEX (например, '#ff0000').")
+                            return
+                        sh_color = custom_color
+                    else:
+                        sh_color = "black"  # По умолчанию черный
 
                 # Преобразование цвета в формат, понятный библиотеке штрихкодов
-                if sh_color.startswith("#"):
-                    sh_color_rgb = html_to_rgb(sh_color)
-                    sh_color_obj = Color.from_argb(*sh_color_rgb)
-                else:
-                    sh_color_obj = getattr(Color, sh_color.lower(), Color.black)
+                try:
+                    if sh_color.startswith("#"):
+                        sh_color_rgb = html_to_rgb(sh_color)
+                        sh_color_obj = Color.from_argb(255, *sh_color_rgb)
+                    else:
+                        # Преобразуем цвет в RGB используя PIL
+                        rgb = Image.new("RGB", (1, 1), sh_color).getpixel((0, 0))
+                        sh_color_obj = Color.from_argb(255, *rgb)
+                except Exception as e:
+                    tk.messagebox.showerror("Ошибка цвета",
+                                            f"Цвет '{sh_color}' не распознан. Используется черный по умолчанию.")
+                    sh_color_obj = Color.black
+
+                # Генерация штрихкода
+                generator = barcode.BarcodeGenerator(barcode.EncodeTypes.CODE39)
+                generator.code_text = user_text
+                generator.parameters.resolution = 300
+                generator.parameters.barcode.x_dimension.pixels = 4
+                generator.parameters.barcode.bar_color = sh_color_obj
+
+                generator.save("barcode.png")
+
+                # Изменение размера и сохранение изображения
+                image = Image.open("barcode.png").resize((width, height))
+                image.save("barcode.png")
+                image_obj = "barcode.png"
+
+            try:
+                # Отображение сгенерированного изображения в интерфейсе
+                self.image = Image.open(image_obj)
+                self.tk_image = ImageTk.PhotoImage(self.image)
+                self.image_label.config(image=self.tk_image, text="")
+                self.image_label.image = self.tk_image
+            except FileNotFoundError:
+                self.image_label.config(text="Изображение не найдено!")
 
                 # Генерация штрихкода
                 generator = barcode.BarcodeGenerator(barcode.EncodeTypes.CODE39)
@@ -489,9 +554,7 @@ class MyGUI:
         output = io.BytesIO()
         pil_image.convert('RGB').save(output, 'BMP')
         data = output.getvalue()[14:]  # Удаляем заголовок BMP
-        output.close()
 
-        # Копирование данных в буфер обмена
         win32clipboard.OpenClipboard()
         win32clipboard.EmptyClipboard()
         win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
@@ -509,6 +572,7 @@ class MyGUI:
         try:
             self.copy_image_to_clipboard(self.image)
             messagebox.showinfo("Успех", "Изображение скопировано в буфер обмена.")
+            self.root.destroy()  # Закрываем главное окно и завершаем программу
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось скопировать изображение: {e}")
 
